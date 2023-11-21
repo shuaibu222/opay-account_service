@@ -91,6 +91,87 @@ func SendToRabbitmq(queue string, data any) error {
 	return nil
 }
 
+func SendTransaction(queue string, data any) error {
+	conn, err := rabbitmqConnection()
+	if err != nil {
+		log.Println("failed to create connection with rabbitmq", err)
+	}
+
+	channel, err := conn.Channel()
+	if err != nil {
+		log.Println("failed to create channel", err)
+	}
+
+	defer conn.Close()
+	defer channel.Close()
+
+	q, err := channel.QueueDeclare(
+		queue, // name
+		false, // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		nil,   // arguments
+	)
+
+	if err != nil {
+		log.Println("failed to declare a queue", err)
+	}
+
+	// We use exchange when we want producer to send to different queues without interacting directly with queue
+	err = channel.ExchangeDeclare(
+		"transaction_exchange", // Exchange name
+		"fanout",               // Exchange type
+		true,                   // Durable
+		false,                  // Auto-deleted
+		false,                  // Internal
+		false,                  // No-wait
+		nil,                    // Arguments
+	)
+	if err != nil {
+		log.Println("Exchange declaration failed", err)
+		return nil
+	}
+
+	// Bind the queue to the exchange to let them know each other. with that we can have as many queues as we want to the same exchange
+	err = channel.QueueBind(
+		q.Name,                 // Queue name
+		"",                     // Routing key
+		"transaction_exchange", // Exchange
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Println("queue bind failed", err)
+	}
+
+	transactionData, err := json.Marshal(data)
+	if err != nil {
+		log.Println("failed to marshal", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = channel.PublishWithContext(ctx,
+		"transaction_exchange", // exchange
+		"",                     // routing key
+		false,                  // mandatory
+		false,                  // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        []byte(transactionData),
+		})
+
+	if err != nil {
+		log.Println("failed to publish with context", err)
+	}
+
+	log.Println("Successfully published")
+
+	return nil
+}
+
 func rabbitmqConnection() (*amqp.Connection, error) {
 	var counts int64
 	var backOff = 1 * time.Second

@@ -13,6 +13,21 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
+type Transaction struct {
+	From
+	To     string  `json:"to" bson:"to"`
+	Amount float64 `json:"amount" bson:"amount"`
+}
+
+type From struct {
+	From string `json:"from" bson:"from"`
+}
+
+type Recived struct {
+	Amount float64 `json:"amount" bson:"amount"`
+	To     string  `json:"to" bson:"to"`
+}
+
 var client *amqp.Connection
 
 func connect() (*amqp.Connection, error) {
@@ -83,6 +98,111 @@ func CreateAccount(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 	w.Write(data)
+}
+
+func AddBalance(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	acc := NewAccount{}
+	money := Balance{}
+
+	param := mux.Vars(r)
+
+	json.NewDecoder(r.Body).Decode(&money)
+	val, err := acc.AddBalanceById(param["id"], &money)
+	if err != nil {
+		// Handle JSON decoding error
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode("Invalid JSON data")
+		return
+	}
+
+	data, err := json.Marshal(val)
+	if err != nil {
+		log.Println(err)
+	}
+	w.Write(data)
+
+}
+
+func ViewBalance(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	acc := NewAccount{}
+
+	param := mux.Vars(r)
+	b, err := acc.GetBalanceById(param["id"])
+	if err != nil {
+		log.Println("Error getting balance", err)
+	}
+
+	data, err := json.Marshal(b)
+	if err != nil {
+		log.Println(err)
+	}
+	w.Write(data)
+}
+
+func SendTransactionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	p := mux.Vars(r)
+
+	acc := NewAccount{}
+	transaction := Transaction{}
+
+	err := json.NewDecoder(r.Body).Decode(&transaction)
+	if err != nil {
+		log.Println(err)
+	}
+
+	accountFounded, err := acc.GetAccountById(p["id"])
+	if err != nil {
+		log.Println("finding account failed", err)
+	}
+
+	// update users account no. from the id
+	transaction.From.From = accountFounded.AccountNo
+
+	// send it to rabbitmq queue
+	err = SendTransaction("send", transaction)
+	if err != nil {
+		log.Println(err)
+	} else {
+		accountFounded.AccountBalance.Balance -= transaction.Amount
+		u, err := collection.UpdateOne(context.TODO(), bson.M{"_id": p["id"]}, bson.M{"$set": bson.M{"balance": accountFounded.AccountBalance.Balance}})
+		if err != nil {
+			log.Println(err)
+		}
+
+		json.NewEncoder(w).Encode(u)
+	}
+
+	json.NewEncoder(w).Encode("Processing transaction...")
+}
+
+func GetByAccountNo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	rcv := Recived{}
+	acc := NewAccount{}
+
+	err := json.NewDecoder(r.Body).Decode(&rcv)
+	if err != nil {
+		log.Println(err)
+	}
+
+	accountFounded, err := acc.GetUserByAccount(rcv.To)
+	if err != nil {
+		log.Println("finding account failed", err)
+	}
+
+	accountFounded.AccountBalance.Balance += rcv.Amount
+	u, err := collection.UpdateOne(context.TODO(), bson.M{"_id": accountFounded.ID}, bson.M{"$set": bson.M{"balance": accountFounded.AccountBalance.Balance}})
+	if err != nil {
+		log.Println(err)
+	}
+
+	json.NewEncoder(w).Encode(u)
+
 }
 
 func GetAccount(w http.ResponseWriter, r *http.Request) {

@@ -35,12 +35,17 @@ func init() {
 }
 
 type NewAccount struct {
-	ID        primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
-	FullName  string             `json:"fullname" bson:"fullname"`
-	AccountNo string             `json:"account" bson:"account"`
-	Email     string             `bson:"email" json:"email"`
-	Password  string             `bson:"password" json:"password"`
-	BVN       string             `bson:"bvn" json:"bvn"`
+	ID             primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
+	FullName       string             `json:"fullname" bson:"fullname"`
+	AccountNo      string             `json:"account" bson:"account"`
+	Email          string             `bson:"email" json:"email"`
+	Password       string             `bson:"password" json:"password"`
+	BVN            string             `bson:"bvn" json:"bvn"`
+	AccountBalance Balance            `bson:"acc_balance" json:"acc_balance"`
+}
+
+type Balance struct {
+	Balance float64 `bson:"balance" json:"balance"`
 }
 
 func (u *NewAccount) CreateNewAccount() (*mongo.InsertOneResult, error) {
@@ -50,6 +55,39 @@ func (u *NewAccount) CreateNewAccount() (*mongo.InsertOneResult, error) {
 	}
 
 	return account, nil
+}
+
+func (u *NewAccount) AddBalanceById(id string, balance *Balance) (*mongo.UpdateResult, error) {
+	Id, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Println("Failed to convert id", err)
+		return nil, err
+	}
+
+	updatedCount, err := collection.UpdateOne(context.Background(), bson.M{"_id": Id}, bson.M{"$set": balance})
+	if err != nil {
+		log.Println("Failed to add balance: ", err)
+		return nil, err
+	}
+	return updatedCount, nil
+}
+
+func (u *NewAccount) GetBalanceById(id string) (*Balance, error) {
+	var balance *Balance
+	Id, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Println("Failed to convert id", err)
+		return nil, err
+	}
+
+	filter := bson.M{"_id": Id}
+	err = collection.FindOne(context.Background(), filter).Decode(&balance)
+	if err != nil {
+		log.Println("Failed to get balance value", err)
+		return nil, err
+	}
+
+	return balance, nil
 }
 
 func (u *NewAccount) GetAccountById(id string) (*NewAccount, error) {
@@ -68,6 +106,18 @@ func (u *NewAccount) GetAccountById(id string) (*NewAccount, error) {
 	}
 
 	return account, nil
+}
+
+// for authentication purposes only
+func (u *NewAccount) GetUserByAccount(account string) (NewAccount, error) {
+	var acc NewAccount
+	filter := bson.M{"account": account}
+	err := collection.FindOne(context.Background(), filter).Decode(&acc)
+	if err != nil {
+		log.Println("Failed to decode account: ", err)
+	}
+
+	return acc, nil
 }
 
 // for authentication purposes only
